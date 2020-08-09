@@ -1,0 +1,179 @@
+;; -*- mode: scheme; -*-
+
+(do
+
+ (nes-header #:num-prg 1 #:num-chr 1 #:mapper 0 #:mirroring vertical)
+
+ ;; memory mapping
+ (defaddr sprite-data #x200) ;; where the sprite control data is
+ (defconst sprite-dma 2) ;; dma address is 100X this = $200
+ (defaddr pad-data #x300) ;; pad data for controllers 1 to 4, 4 bytes
+ (defaddr sprite-pos-x #x304) ;; current sprite position (x coord), 16 bytes
+ (defaddr sprite-pos-y #x314)  ;; current sprite position (y coord), 16 bytes
+ (defaddr sprite-anim-frame #x324)  ;; sprite animation frame counter, 16 bytes
+ (defconst ppu-name-table-0 #x2000)
+ (defconst ppu-palette #x3f00)
+
+
+ ;; CHRs used by sprites
+ (defconst a-button-chr 1)
+ (defconst b-button-chr 2)
+ (defconst left-arrow-chr 3)
+ (defconst right-arrow-chr 4)
+
+ ;; sprite rendering constants
+ (defconst num-sprites 16)
+ (defconst ANIM-STOPPED #xFF)
+ (defconst sprite-x-offset 40)
+ (defconst first-sprite-y-offset 40)
+
+ ;; control pad button masks in pad-data
+ (defconst joypad-a      #b10000000)
+ (defconst joypad-b      #b01000000)
+ (defconst joypad-select #b00100000)
+ (defconst joypad-start  #b00010000)
+ (defconst joypad-up     #b00001000)
+ (defconst joypad-down   #b00000100)
+ (defconst joypad-left   #b00000010)
+ (defconst joypad-right  #b00000001)
+
+ ;; code start
+ (program-begin #xc000)
+
+ ;; a global frame counter
+ (defvar gframe 0)
+
+ (defvector (reset)
+   (init-system)
+   ;; disable all graphics.
+   (set! REG-PPU-CTRL 0)
+   (set! REG-PPU-MASK 0)
+   ;; init graphics
+   (init-graphics)
+   ;; set basic ppu registers.  load background from $0000,
+   ;; sprites from $0000, and the name table from $2000.
+   (set! REG-PPU-CTRL #b10000000)
+   (set! REG-PPU-MASK #b00011110)
+   (asm
+    ;; go into an infite loop - vblank interrupt takes over
+    "loop: jmp loop"))
+
+ (defsub (init-graphics)
+   (load-bg #x00)
+   (load-palette)
+   (init-sprites))
+
+ (defsub (load-bg chr-code)
+   (loop n 0 3
+	 (ppu-memset ppu-name-table-0 n 0 128 chr-code)
+	 (ppu-memset ppu-name-table-0 n #x80 128 chr-code))
+   (ppu-memset ppu-name-table-0 3 0 128 chr-code)
+   (ppu-memset ppu-name-table-0 3 #x80 (- #xC0 #x80) chr-code)
+   )
+
+ (defsub (load-palette)
+   (ppu-memcpy ppu-palette 0 0 #x20 palette 0))
+
+ (defsub (init-sprites)
+   (loop n 0 num-sprites
+	 (set-sprite-x! n sprite-x-offset)
+	 (set-sprite-y! n (+ first-sprite-y-offset (<< n 3)))
+	 ;; sprite ID rotates 1 to 4
+	 (set-sprite-id! n (+ 1 (and n #x03)))
+	 ;; every 4 sprites get same palette
+	 (set-sprite-attr! n (>> n 2))
+	 (poke! sprite-pos-x n sprite-x-offset)
+	 (poke! sprite-pos-y n (+ first-sprite-y-offset (<< n 3)))
+	 (poke! sprite-anim-frame n ANIM-STOPPED)))
+
+ (defvector (nmi)
+   (anim-sprites)
+   ;; start sprite data dma to the oam
+   (set! REG-OAM-DMA sprite-dma)
+   (set! REG-PPU-SCROLL 0)
+   (set! REG-PPU-SCROLL 0)
+   (inc gframe)
+   (if (eq? gframe #x40)
+       (poke! sprite-anim-frame 0 0)
+       #f))
+
+ ;;;; graphics routines
+
+ ;; animation update for sprites
+ (defsub (anim-sprites)
+   (let ((cur-x) (cur-y) (cur-anim-frame) (tmp))
+     (loop n 0 num-sprites
+	   (set! cur-x (peek sprite-pos-x n))
+	   (set! cur-y (peek sprite-pos-y n))
+	   (set! cur-anim-frame (peek sprite-anim-frame n))
+	   (if (not (eq? cur-anim-frame ANIM-STOPPED))
+	       (do
+		   (set-multiple! cur-x cur-y (calculate-sprite-offset cur-x cur-y cur-anim-frame))
+		   (update-anim-frame n cur-anim-frame))
+	       #f)
+	   (set-sprite-x! n cur-x)
+	   (set-sprite-y! n cur-y))))
+
+ (defsub (calculate-sprite-offset cur-x cur-y cur-anim-frame)
+   (let ((tmp))
+   (set! cur-x (+ cur-x (peek animations (<< cur-anim-frame 1))))
+   ;; this shouldn't be necessary, but it appears (+ 1 a) freaks out if a is a left-shift expression
+   (set! tmp (<< cur-anim-frame 1))
+   (set! cur-y (+ cur-y (peek animations (+ 1 tmp))))
+   (return cur-x cur-y)))
+
+ (defsub (update-anim-frame sprite-idx cur-anim-frame)
+   (inc cur-anim-frame)
+   (if (eq? (peek animations (<< cur-anim-frame 1)) #x80)
+       (set! cur-anim-frame ANIM-STOPPED) #f)
+   (poke! sprite-anim-frame sprite-idx cur-anim-frame))
+
+ ;; Main palette
+ (deflabel palette)
+ (bytes
+  #x0f ; background color
+  #x20 #x11 #x14  ; bg palette 1
+  #x0f
+  #x01 #x11 #x12  ; bg palette 2
+  #x0f
+  #x11 #x22 #x31  ; bg palette 3
+  #x0f
+  #x20 #x27 #xcc  ; bg palette 4
+
+  #x0F
+  #x20 #x15 #x14  ; fg palette 1 (player 1)
+  #x0F
+  #x20 #x2A #x14  ; fg palette 2 (player 2)
+  #x0F
+  #x20 #x11 #x14  ; fg palette 3 (player 3)
+  #x0F
+  #x00 #x38 #x14  ; fg palette 4 (player 4)
+  )
+
+ ;; animation scripts
+ ;; x and y offsets of animation
+ ;; #x80 is a sentinel value to end animation
+ (deflabel animations)
+ (bytes
+  ;; bell ding
+  #x02 #x00
+  #x04 #x00
+  #x04 #x00
+  #x04 #x00
+  #x04 #x00
+  #x04 #x00
+  #x04 #x00
+  #x03 #x00
+  #x02 #x00
+  #x01 #x00
+  #x80)
+
+
+
+ (program-complete)
+ (asm
+".incbin \"handwave.chr\"
+; fill the rest of the first chr-rom block with zeroes.
+.align $1000"))
+
+
