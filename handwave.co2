@@ -8,21 +8,26 @@
  (defaddr sprite-data #x200) ;; where the sprite control data is
  (defconst sprite-dma 2) ;; dma address is 100X this = $200
  (defaddr pad-data #x300) ;; pad data for controllers 1 to 4, 4 bytes
- (defaddr sprite-pos-x #x304) ;; current sprite position (x coord), 16 bytes
- (defaddr sprite-pos-y #x314)  ;; current sprite position (y coord), 16 bytes
- (defaddr sprite-anim-frame #x324)  ;; sprite animation frame counter, 16 bytes
+ (defaddr pad-data-last-frame #x304)  ;; pad data from last frame, 4 bytes
+ (defaddr pad-press #x308)  ;; which buttons were pressed this frame, 4 bytes
+ (defaddr sprite-pos-x #x30c) ;; current sprite position (x coord), 16 bytes
+ (defaddr sprite-pos-y #x31c)  ;; current sprite position (y coord), 16 bytes
+ (defaddr sprite-anim-frame #x32c)  ;; sprite animation frame counter, 16 bytes
+ (defaddr debug-ctrl #x340)
+
  (defconst ppu-name-table-0 #x2000)
  (defconst ppu-palette #x3f00)
 
 
  ;; CHRs used by sprites
- (defconst a-button-chr 1)
- (defconst b-button-chr 2)
- (defconst left-arrow-chr 3)
- (defconst right-arrow-chr 4)
+ (defconst left-arrow-chr 1)
+ (defconst right-arrow-chr 2)
+ (defconst b-button-chr 3)
+ (defconst a-button-chr 4)
 
  ;; sprite rendering constants
  (defconst num-sprites 16)
+ (defconst num-waves 16)
  (defconst ANIM-STOPPED #xFF)
  (defconst sprite-x-offset 40)
  (defconst first-sprite-y-offset 40)
@@ -87,17 +92,103 @@
 	 (poke! sprite-anim-frame n ANIM-STOPPED)))
 
  (defvector (nmi)
-   (anim-sprites)
    ;; start sprite data dma to the oam
    (set! REG-OAM-DMA sprite-dma)
    (set! REG-PPU-SCROLL 0)
    (set! REG-PPU-SCROLL 0)
    (inc gframe)
-   (if (eq? gframe #x40)
-       (poke! sprite-anim-frame 0 0)
-       #f))
 
- ;;;; graphics routines
+   (read-joypads)
+   (check-wave-activations)
+   (anim-sprites))
+
+ (defsub (debug-controller)
+   (let ((ctr))
+     (set! ctr 0)
+     (set! REG-JOYPAD-0 1)
+     (set! REG-JOYPAD-0 0)
+     (loop n 0 16
+	   (poke! debug-ctrl ctr (peek REG-JOYPAD-0))
+	   (inc ctr))
+     (set! REG-JOYPAD-1 1)
+     (set! REG-JOYPAD-1 0)
+     (loop n 0 16
+	   (poke! debug-ctrl ctr (peek REG-JOYPAD-1))
+	   (inc ctr))))
+
+
+   (set! REG-JOYPAD-1 1)
+   (set! REG-JOYPAD-1 0)
+
+
+ ;;;; GAME LOGIC
+ ;; check controller inputs for wave activations
+ (defsub (check-wave-activations)
+   (let ((offset1) (offset2))
+     (loop n 0 num-waves
+	   (set! offset1 (<< n 1))
+	   (set! offset2 (+ 1 offset1))
+	 (if (button-pressed (peek controller-mapping offset1) (peek controller-mapping offset2))
+	     (on-wave-triggered n)
+	     #f))))
+
+ (defsub (on-wave-triggered which-wave)
+   (poke! sprite-anim-frame which-wave 0))
+
+ ;;;; CONTROLLER LOGIC
+ ;; read in joypad input
+ (defsub (read-joypads)
+     ;; request data from joypads
+     (set! REG-JOYPAD-0 1)
+     (set! REG-JOYPAD-0 0)
+     (read-joypad-0 0)
+     (read-joypad-0 2)
+     (loop n 0 8
+     	   (peek REG-JOYPAD-0))
+     (set! REG-JOYPAD-1 1)
+     (set! REG-JOYPAD-1 0)
+     (read-joypad-1 1)
+     (read-joypad-1 3)
+     (loop n 0 8
+     	   (peek REG-JOYPAD-1))
+     (update-pad-presses))
+
+ ;; read input from joy port 0
+ ;; TODO: should be able to use macros or pass an address arg to consolidate this with read-joypad-1
+ (defsub (read-joypad-0 store-offset)
+   (let ((pad))
+     (set! pad 0)
+     (loop n 0 8
+	   (set! pad (<< pad 1))
+	   (set! pad (or pad (and (peek REG-JOYPAD-0 0) #x1))))
+     (poke! pad-data store-offset pad)))
+
+ ;; read input from joy port 1
+ ;; TODO: should be able to use macros or pass an address arg to consolidate this with read-joypad-0
+ (defsub (read-joypad-1 store-offset)
+   (let ((pad))
+     (set! pad 0)
+     (loop n 0 8
+	   (set! pad (<< pad 1))
+	   (set! pad (or pad (and (peek REG-JOYPAD-1 0) #x1))))
+     (poke! pad-data store-offset pad)))
+
+
+
+ ;; update last frame and pad presses
+ (defsub (update-pad-presses)
+   (let ((rising-edge))
+   (loop n 0 4
+	 (set! rising-edge (xor (peek pad-data-last-frame n) #xff))
+	 (poke! pad-press n (and (peek pad-data n) rising-edge))
+	 (poke! pad-data-last-frame n (peek pad-data n)))))
+
+
+ ;; check to see if button on controller was pressed
+ (defsub (button-pressed which-controller which-button)
+   (return (and (peek pad-press which-controller) which-button)))
+
+ ;;;; GRAPHICS ROUTINES
 
  ;; animation update for sprites
  (defsub (anim-sprites)
@@ -127,6 +218,30 @@
    (if (eq? (peek animations (<< cur-anim-frame 1)) #x80)
        (set! cur-anim-frame ANIM-STOPPED) #f)
    (poke! sprite-anim-frame sprite-idx cur-anim-frame))
+
+ ;;;; DATA SECTION
+
+ ;; mapping from buttons to waves
+ ;; mapping is pairs of the form controller-id, which-button
+ (deflabel controller-mapping)
+ (bytes
+  0 joypad-left
+  0 joypad-right
+  0 joypad-b
+  0 joypad-a
+  1 joypad-left
+  1 joypad-right
+  1 joypad-b
+  1 joypad-a
+  2 joypad-left
+  2 joypad-right
+  2 joypad-b
+  2 joypad-a
+  3 joypad-left
+  3 joypad-right
+  3 joypad-b
+  3 joypad-a)
+
 
  ;; Main palette
  (deflabel palette)
@@ -161,10 +276,10 @@
   #x04 #x00
   #x04 #x00
   #x04 #x00
-  #x04 #x00
-  #x04 #x00
   #x03 #x00
   #x02 #x00
+  #x02 #x00
+  #x01 #x00
   #x01 #x00
   #x80)
 
