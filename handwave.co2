@@ -47,6 +47,8 @@
 
  ;; a global frame counter
  (defvar gframe 0)
+ ;; which of the 2 pulse waves we are playing from, 0 for P1, 1 for P2
+ (defvar g-which-pulse 0)
 
  (defvector (reset)
    (init-system)
@@ -102,7 +104,7 @@
 
    (read-joypads)
    (check-wave-activations)
-   (sound-notes)
+   (play-notes)
    (anim-sprites))
 
  ;;;; GAME LOGIC
@@ -227,25 +229,38 @@
  ;;;; AUDIO ROUTINES
 
 
- (defsub (sound-notes)
-   ;; finish later
-   (if (peek notes-to-sound 0)
-       (do
-	   (set! REG-APU-PULSE1-CONTROL #b10000011)
-	   (set! REG-APU-PULSE1-RAMP #b00000000)
-	   (set! REG-APU-PULSE1-FT #x0c)
-	 (set! REG-APU-PULSE1-CT #b11111011))
-       #f)
-   (if (peek notes-to-sound 1)
-       (do
-	   (set! REG-APU-PULSE2-CONTROL #b10000011)
-	   (set! REG-APU-PULSE1-RAMP #b00000000)
-	   (set! REG-APU-PULSE2-FT #xc9)
-	 (set! REG-APU-PULSE2-CT (or (<< #b00011111 3) #x01)))
-       #f)
+ (defsub (play-notes)
+   (let ((mask) (bank-contents))
+     (loop bank 0 2
+	   (set! mask 1)
+	   (set! bank-contents (peek notes-to-sound bank))
+	   (loop wave 0 8
+		 (if (and mask bank-contents)
+		     (play-note (+ (<< bank 3) wave))
+		     #f)
+		 (set! mask (<< mask 1)))))
    (poke! notes-to-sound 0 0)
-   (poke! notes-to-sound 1 0)
-   )
+   (poke! notes-to-sound 1 0))
+
+ (defsub (play-note which-note)
+   (set! which-note (<< which-note 1))
+   (let ((ft) (ct))
+     (set! ct (or (<< #b00011111 3) (peek notes-c-major which-note)))
+     (inc which-note)
+     (set! ft (peek notes-c-major which-note))
+     (if g-which-pulse
+	 (do
+	     (set! REG-APU-PULSE2-CONTROL #b10000011)
+	     (set! REG-APU-PULSE2-RAMP #b00000000)
+	   (set! REG-APU-PULSE2-FT ft)
+	   (set! REG-APU-PULSE2-CT ct))
+	 (do
+	     	     (set! REG-APU-PULSE1-CONTROL #b10000011)
+	     (set! REG-APU-PULSE1-RAMP #b00000000)
+	   (set! REG-APU-PULSE1-FT ft)
+	   (set! REG-APU-PULSE1-CT ct))))
+   (inc g-which-pulse)
+   (set! g-which-pulse (and g-which-pulse #x01)))
 
  ;;;; DATA SECTION
 
@@ -269,6 +284,30 @@
   3 joypad-right
   3 joypad-b
   3 joypad-a)
+
+ ;; mappings from waves to notes
+ ;; from wave0 (high note) to wave15 (low note)
+ ;; high-order byte, low-order byte
+ (deflabel notes-c-major)
+ (bytes
+  #x1 #x3f
+  #x1 #x52
+  #x1 #x67
+  #x1 #x7c
+  #x1 #x93
+  #x1 #xab
+  #x1 #xc4
+  #x1 #xdf
+
+  #x1 #xfb
+  #x2 #x1a
+  #x2 #x3a
+  #x2 #x5c
+  #x2 #x80
+  #x2 #xa6
+  #x2 #xce
+  #x2 #xf9
+  )
 
 
  ;; Main palette
