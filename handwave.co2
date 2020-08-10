@@ -10,10 +10,10 @@
  (defaddr pad-data #x300) ;; pad data for controllers 1 to 4, 4 bytes
  (defaddr pad-data-last-frame #x304)  ;; pad data from last frame, 4 bytes
  (defaddr pad-press #x308)  ;; which buttons were pressed this frame, 4 bytes
- (defaddr sprite-pos-x #x30c) ;; current sprite position (x coord), 16 bytes
- (defaddr sprite-pos-y #x31c)  ;; current sprite position (y coord), 16 bytes
- (defaddr sprite-anim-frame #x32c)  ;; sprite animation frame counter, 16 bytes
- (defaddr debug-ctrl #x340)
+ (defaddr notes-to-sound #x30c)  ;; notes to start sounding this frame, 2 bytes
+ (defaddr sprite-pos-x #x30e) ;; current sprite position (x coord), 16 bytes
+ (defaddr sprite-pos-y #x31e)  ;; current sprite position (y coord), 16 bytes
+ (defaddr sprite-anim-frame #x32e)  ;; sprite animation frame counter, 16 bytes
 
  (defconst ppu-name-table-0 #x2000)
  (defconst ppu-palette #x3f00)
@@ -59,6 +59,8 @@
    ;; sprites from $0000, and the name table from $2000.
    (set! REG-PPU-CTRL #b10000000)
    (set! REG-PPU-MASK #b00011110)
+   ;; enable audio tools for system
+   (set! REG-APU-CHANNEL #b00000111)
    (asm
     ;; go into an infite loop - vblank interrupt takes over
     "loop: jmp loop"))
@@ -100,26 +102,8 @@
 
    (read-joypads)
    (check-wave-activations)
+   (sound-notes)
    (anim-sprites))
-
- (defsub (debug-controller)
-   (let ((ctr))
-     (set! ctr 0)
-     (set! REG-JOYPAD-0 1)
-     (set! REG-JOYPAD-0 0)
-     (loop n 0 16
-	   (poke! debug-ctrl ctr (peek REG-JOYPAD-0))
-	   (inc ctr))
-     (set! REG-JOYPAD-1 1)
-     (set! REG-JOYPAD-1 0)
-     (loop n 0 16
-	   (poke! debug-ctrl ctr (peek REG-JOYPAD-1))
-	   (inc ctr))))
-
-
-   (set! REG-JOYPAD-1 1)
-   (set! REG-JOYPAD-1 0)
-
 
  ;;;; GAME LOGIC
  ;; check controller inputs for wave activations
@@ -133,7 +117,28 @@
 	     #f))))
 
  (defsub (on-wave-triggered which-wave)
-   (poke! sprite-anim-frame which-wave 0))
+   (poke! sprite-anim-frame which-wave 0)
+   (sound-note which-wave))
+
+ ;; primes a note to be sounded this cycle
+ (defsub (sound-note which-note)
+   (let ((bank))
+     (if (> which-note 7)
+	 (do
+	     (set! bank 1)
+	     (set! which-note (- which-note 8)))
+	 (set! bank 0))
+     (poke! notes-to-sound bank (or (peek notes-to-sound bank) (roll-left-n #x1 which-note)))))
+
+ ;; utility function to roll a value n to the left
+ (defsub (roll-left-n value count)
+   ; surprisingly, this seems necessary to catch 0 counts
+   (if (eq? count 0)
+       (return value)
+       #f)
+   (loop n 0 count
+	 (set! value (<< value 1)))
+   (return value))
 
  ;;;; CONTROLLER LOGIC
  ;; read in joypad input
@@ -218,6 +223,29 @@
    (if (eq? (peek animations (<< cur-anim-frame 1)) #x80)
        (set! cur-anim-frame ANIM-STOPPED) #f)
    (poke! sprite-anim-frame sprite-idx cur-anim-frame))
+
+ ;;;; AUDIO ROUTINES
+
+
+ (defsub (sound-notes)
+   ;; finish later
+   (if (peek notes-to-sound 0)
+       (do
+	   (set! REG-APU-PULSE1-CONTROL #b10000011)
+	   (set! REG-APU-PULSE1-RAMP #b00000000)
+	   (set! REG-APU-PULSE1-FT #x0c)
+	 (set! REG-APU-PULSE1-CT #b11111011))
+       #f)
+   (if (peek notes-to-sound 1)
+       (do
+	   (set! REG-APU-PULSE2-CONTROL #b10000011)
+	   (set! REG-APU-PULSE1-RAMP #b00000000)
+	   (set! REG-APU-PULSE2-FT #xc9)
+	 (set! REG-APU-PULSE2-CT (or (<< #b00011111 3) #x01)))
+       #f)
+   (poke! notes-to-sound 0 0)
+   (poke! notes-to-sound 1 0)
+   )
 
  ;;;; DATA SECTION
 
