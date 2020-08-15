@@ -16,7 +16,11 @@
  (defaddr sprite-anim-frame #x32e)  ;; sprite animation frame counter, 16 bytes
 
  (defconst ppu-name-table-0 #x2000)
+ (defconst ppu-name-table-1 #x2400)
  (defconst ppu-palette #x3f00)
+
+ (defconst game-on-ppu-ctrl #b10000000)
+ (defconst ppu-ctrl-vram-increment-mask #b00000100)
 
 
  ;; CHRs used by sprites
@@ -24,13 +28,19 @@
  (defconst right-arrow-chr 2)
  (defconst b-button-chr 3)
  (defconst a-button-chr 4)
+ (defconst staff-chr 5)
+ (defconst note-chr 6)
+
+ ;; background rendering constants
+ (defconst background-start-offset-1 #x2100)
+ (defconst background-start-offset-2 #x2500)
 
  ;; sprite rendering constants
  (defconst num-sprites 16)
  (defconst num-waves 16)
  (defconst ANIM-STOPPED #xFF)
  (defconst sprite-x-offset 40)
- (defconst first-sprite-y-offset 40)
+ (defconst first-sprite-y-offset 64)
 
  ;; control pad button masks in pad-data
  (defconst joypad-a      #b10000000)
@@ -49,6 +59,17 @@
  (defvar gframe 0)
  ;; which of the 2 pulse waves we are playing from, 0 for P1, 1 for P2
  (defvar g-which-pulse 0)
+ ;; scroll logic
+ (defvar g-scroll-high 0)
+ (defvar g-scroll-low 0)
+ ;; song control
+ (defvar g-playing 0) ; are we playing a song?
+ (defvar g-next-frame-notes-high-byte 0)
+ (defvar g-next-frame-notes-low-byte 0)
+ (defpointer g-song-index) ; current byte of song control logic
+
+ ;; debugging
+ (defvar g-debug 0)
 
  (defvector (reset)
    (init-system)
@@ -59,10 +80,11 @@
    (init-graphics)
    ;; set basic ppu registers.  load background from $0000,
    ;; sprites from $0000, and the name table from $2000.
-   (set! REG-PPU-CTRL #b10000000)
+   (set! REG-PPU-CTRL game-on-ppu-ctrl)
    (set! REG-PPU-MASK #b00011110)
    ;; enable audio tools for system
    (set! REG-APU-CHANNEL #b00000111)
+   (set-pointer! g-song-index song1)
    (asm
     ;; go into an infite loop - vblank interrupt takes over
     "loop: jmp loop"))
@@ -70,6 +92,7 @@
  (defsub (init-graphics)
    (load-bg #x00)
    (load-palette)
+   (load-staff)
    (init-sprites))
 
  (defsub (load-bg chr-code)
@@ -78,7 +101,26 @@
 	 (ppu-memset ppu-name-table-0 n #x80 128 chr-code))
    (ppu-memset ppu-name-table-0 3 0 128 chr-code)
    (ppu-memset ppu-name-table-0 3 #x80 (- #xC0 #x80) chr-code)
+   (loop n 0 3
+	 (ppu-memset ppu-name-table-1 n 0 128 chr-code)
+	 (ppu-memset ppu-name-table-1 n #x80 128 chr-code))
+   (ppu-memset ppu-name-table-1 3 0 128 chr-code)
+   (ppu-memset ppu-name-table-1 3 #x80 (- #xC0 #x80) chr-code)
    )
+
+ (defsub (load-staff)
+   (poke! REG-PPU-ADDR (high background-start-offset-1))
+   (poke! REG-PPU-ADDR (low background-start-offset-1))
+   (plot-staff-on-one-scroll-buffer)
+   (poke! REG-PPU-ADDR (high background-start-offset-2))
+   (poke! REG-PPU-ADDR (low background-start-offset-2))
+   (plot-staff-on-one-scroll-buffer))
+
+ (defsub (plot-staff-on-one-scroll-buffer)
+   ;; 16 rows of buttons, so we do this step 32 * 16 = 512 times
+   (loop n 0 16
+	 (loop k 0 32
+	       (poke! REG-PPU-DATA staff-chr))))
 
  (defsub (load-palette)
    (ppu-memcpy ppu-palette 0 0 #x20 palette 0))
@@ -96,16 +138,31 @@
 	 (poke! sprite-anim-frame n ANIM-STOPPED)))
 
  (defvector (nmi)
+   ;;; TIMING CRITICAL CODE: must finish during vblank
+   ;; some test logic for updating notes
+   (if (eq? 0 (and g-scroll-low #b00000111))
+       (plot-notes g-next-frame-notes-low-byte g-next-frame-notes-high-byte)
+       #f)
    ;; start sprite data dma to the oam
    (set! REG-OAM-DMA sprite-dma)
+
+   (set! REG-PPU-SCROLL g-scroll-low)
    (set! REG-PPU-SCROLL 0)
-   (set! REG-PPU-SCROLL 0)
+   (set! REG-PPU-CTRL (or game-on-ppu-ctrl g-scroll-high))
+   ;;; END TIMING CRITICAL CODE
    (inc gframe)
 
+   (update-scroll)
    (read-joypads)
    (check-wave-activations)
    (play-notes)
-   (anim-sprites))
+   (anim-sprites)
+   (if (eq? 7 (and g-scroll-low #b00000111))
+       (step-draw-note)
+       #f))
+
+
+
 
  ;;;; GAME LOGIC
  ;; check controller inputs for wave activations
@@ -141,6 +198,65 @@
    (loop n 0 count
 	 (set! value (<< value 1)))
    (return value))
+
+
+ ;; updates one frame of note draw animation
+ (defsub (step-draw-note)
+   (set! g-next-frame-notes-high-byte 0)
+   (set! g-next-frame-notes-low-byte 0)
+   (let ((stepping) (mode))
+     (set! stepping 1)
+     (while stepping
+	    (set-multiple! mode g-next-frame-notes-high-byte g-next-frame-notes-low-byte
+			   (handle-next-note g-next-frame-notes-high-byte g-next-frame-notes-low-byte))
+	    (cond
+	     ((and mode #x1)
+	      (set! stepping 0))))))
+
+ ;; Reads the next command (or commands) in the song and processes it
+ ;; return mode, high-byte-notes, low-byte-notes
+ ;; 'mode' is mode of operation for next run, #b0NNNNNCC
+ ;; CC values
+ ;; 0 - normal mode; read and process next byte
+ ;; 1 - do a rest; NNNNN is how long (with 0 meaning single-step rest)
+ ;; returns next mode, high byte, low byte of which notes to render
+ (defsub (handle-next-note high-byte-notes low-byte-notes)
+   (let ((cur-note) (rest-after-this-note))
+     (set! cur-note (peek g-song-index))
+     (set! g-debug cur-note)
+     (set! rest-after-this-note (and #b10000000 cur-note))
+     (cond
+      ((and cur-note #x1)
+					; directive mode
+       (if (eq? 0 (and cur-note #b00000110))
+	   (return #x1 0 0)
+	   #f))
+      ((eq? #x02 (and cur-note #b00000110))
+					; strike-note
+       (set-multiple! high-byte-notes low-byte-notes
+		      (add-note-index-to-mask (and #b00001111 (>> cur-note 3)) high-byte-notes low-byte-notes))
+       (inc-g-song-index)
+       (if rest-after-this-note
+	   (return #x1 high-byte-notes low-byte-notes)
+	   (return 0 high-byte-notes low-byte-notes))))))
+
+ (defsub (add-note-index-to-mask note-index high-byte-notes low-byte-notes)
+   (let ((add-to-high) (note-offset))
+     (if (> note-index 7)
+	 (do
+	     (set! add-to-high 1)
+	     (set! note-index (- note-index 8)))
+	 (set! add-to-high 0))
+     (set! note-offset (roll-left-n 1 note-index))
+     (if add-to-high
+	 (set! high-byte-notes (or high-byte-notes note-offset))
+	 (set! low-byte-notes (or low-byte-notes note-offset)))
+     (return high-byte-notes low-byte-notes)))
+
+ (defsub (inc-g-song-index)
+   (let ((tmp))
+     (set! tmp 1)
+     (set-pointer! g-song-index (+ g-song-index tmp))))
 
  ;;;; CONTROLLER LOGIC
  ;; read in joypad input
@@ -180,8 +296,6 @@
 	   (set! pad (or pad (and (peek REG-JOYPAD-1 0) #x1))))
      (poke! pad-data store-offset pad)))
 
-
-
  ;; update last frame and pad presses
  (defsub (update-pad-presses)
    (let ((rising-edge))
@@ -196,6 +310,42 @@
    (return (and (peek pad-press which-controller) which-button)))
 
  ;;;; GRAPHICS ROUTINES
+ (defsub (update-scroll)
+   (inc g-scroll-low)
+   (if (eq? g-scroll-low 0)
+       (set! g-scroll-high (and (not g-scroll-high) #x1))
+       #f))
+
+ ;; Plot the notes at the location of screen just off scroll FOV
+ (defsub (plot-notes first-eight second-eight)
+   (let ((high-nametable-byte) (low-nametable-byte))
+     (set-multiple! high-nametable-byte low-nametable-byte (find-scroll-edge))
+     ;; switch to vertical VRAM update mode
+     (set! REG-PPU-CTRL (or game-on-ppu-ctrl ppu-ctrl-vram-increment-mask))
+     (set! REG-PPU-ADDR high-nametable-byte)
+     (set! REG-PPU-ADDR low-nametable-byte)
+     (plot-some-notes first-eight)
+     (plot-some-notes second-eight)
+     ;; back to horizontal VRAM update mode
+     (set! REG-PPU-CTRL game-on-ppu-ctrl)))
+
+ ;; find the top-left nametable address of the first column past the right edge of the screen
+ (defsub (find-scroll-edge)
+   (let ((high-byte) (low-byte))
+     (if (eq? 1 g-scroll-high)
+	 (set! high-byte #x21)  ;; high byte nametable 1
+	 (set! high-byte #x25)) ;; high byte nametable 2
+     ;; TODO(mtomczak): Does this want to be + 8 to make sure we're all the way off screen?
+     (set! low-byte (>> g-scroll-low 3))  ;; low-8-bits of scroll / 8
+     (return high-byte low-byte)))
+
+ ;; plot 8 notes at the VRAM stripe pointed to by REG-PPU-ADDR. Low-order bit is the first note
+ (defsub (plot-some-notes notes)
+   (loop n 0 8
+	 (if (eq? 0 (and notes #x1))
+	     (set! REG-PPU-DATA staff-chr)
+	     (set! REG-PPU-DATA note-chr))
+	 (set! notes (>> notes 1))))
 
  ;; animation update for sprites
  (defsub (anim-sprites)
@@ -314,13 +464,13 @@
  (deflabel palette)
  (bytes
   #x0f ; background color
-  #x20 #x11 #x14  ; bg palette 1
+  #x20 #x15 #x14  ; bg palette 1
   #x0f
-  #x01 #x11 #x12  ; bg palette 2
+  #x01 #x2A #x12  ; bg palette 2
   #x0f
-  #x11 #x22 #x31  ; bg palette 3
+  #x11 #x11 #x31  ; bg palette 3
   #x0f
-  #x20 #x27 #xcc  ; bg palette 4
+  #x20 #x38 #xcc  ; bg palette 4
 
   #x0F
   #x20 #x15 #x14  ; fg palette 1 (player 1)
@@ -350,7 +500,47 @@
   #x01 #x00
   #x80)
 
-
+ ;;;; SONG DATA
+ ;; Song data format
+ ;; 8 bits per note, formatted as follows
+ ;; H------L
+ ;; RNNNNCCD
+ ;; D: "directive", switches between node mode (0) and directive mode (1)
+ ;;
+ ;; - IN NODE MODE -
+ ;; CC: control
+ ;; - 00: rest. NNNN is # of empty beats
+ ;; - 01: strike. NNNN is note ID (0 is the top-most wave)
+ ;; - 10: strike hold / hold end. NNNN is note ID
+ ;; - 11: reserved for future use
+ ;; NNNN: either index of note to sound or low-order 4 bits of beats to rest
+ ;;
+ ;; R: If note is sounded, setting this to 1 indicates this is last note to
+ ;;  sound on this beat.  beat. If CC is 00, this is high order bit of beats to
+ ;;  rest
+ ;;
+ ;; - IN DIRECTIVE MODE -
+ ;; CC: control
+ ;; - 00: end of song. Stop rendering new notes
+ (deflabel song1)
+ (bytes
+ #b10000010
+ #b10001010
+ #b10010010
+ #b10011010
+ #b10100010
+ #b10101010
+ #b10110010
+ #b00111010
+ #b11000010
+ #b11001010
+ #b11010010
+ #b11011010
+ #b11100010
+ #b11101010
+ #b11110010
+ #b11111010
+ #b00000001)
 
  (program-complete)
  (asm
