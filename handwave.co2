@@ -62,6 +62,7 @@
  ;; scroll logic
  (defvar g-scroll-high 0)
  (defvar g-scroll-low 0)
+ (defvar g-scroll-delay-ctr 0)
  ;; song control
  (defvar g-playing 0) ; are we playing a song?
  (defvar g-next-frame-notes-high-byte 0)
@@ -156,10 +157,7 @@
    (read-joypads)
    (check-wave-activations)
    (play-notes)
-   (anim-sprites)
-   (if (eq? 7 (and g-scroll-low #b00000111))
-       (step-draw-note)
-       #f))
+   (anim-sprites))
 
 
 
@@ -311,10 +309,17 @@
 
  ;;;; GRAPHICS ROUTINES
  (defsub (update-scroll)
-   (inc g-scroll-low)
-   (if (eq? g-scroll-low 0)
-       (set! g-scroll-high (and (not g-scroll-high) #x1))
-       #f))
+   (if (eq? g-scroll-delay-ctr 0)
+       (do
+	   (inc g-scroll-low)
+	   (if (eq? g-scroll-low 0)
+	       (set! g-scroll-high (and (not g-scroll-high) #x1))
+	       #f)
+	 (set! g-scroll-delay-ctr 1)
+	 (if (eq? 7 (and g-scroll-low #b00000111))
+	     (step-draw-note)
+	     #f))
+       (dec g-scroll-delay-ctr)))
 
  ;; Plot the notes at the location of screen just off scroll FOV
  (defsub (plot-notes first-eight second-eight)
