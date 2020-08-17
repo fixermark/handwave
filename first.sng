@@ -1,0 +1,13 @@
+Song format, loose description
+
+Songs are lists of the following form:
+
+(song (initial-assignments) cmd-a cmd-b cmd-c ...)
+
+(initial-assignments) is a starting (assign...) command that lists all 16 notes. It is an error to list less than 16
+
+Where cmd-a, cmd-b, cmd-c etc. are commands as follows:
+
+- (assign 0 c4 1 c#4 2 d4 3 d#4 ...)
+
+Assignment of notes to handwaves. 0 is the "highest" handwave in the list

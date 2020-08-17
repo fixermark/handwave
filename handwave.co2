@@ -526,26 +526,7 @@
  ;; from wave0 (high note) to wave15 (low note)
  ;; high-order byte, low-order byte
  (deflabel notes-c-major)
- (bytes
-  #x1 #x3f
-  #x1 #x52
-  #x1 #x67
-  #x1 #x7c
-  #x1 #x93
-  #x1 #xab
-  #x1 #xc4
-  #x1 #xdf
-
-  #x1 #xfb
-  #x2 #x1a
-  #x2 #x3a
-  #x2 #x5c
-  #x2 #x80
-  #x2 #xa6
-  #x2 #xce
-  #x2 #xf9
-  )
-
+ (include "testsong.not")
 
  ;; Main palette
  (deflabel palette)
@@ -615,40 +596,7 @@
  ;; 12 - low d
  ;; 10 - low e
  ;; 7  - low g
- (bytes
-  #b11010010
-  #b11100010
-  #b11110010
-  #b11100010
-  #b11010010
-  #b11010010
-  #b11010010
-  #b00000000
-  #b11100010
-  #b11100010
-  #b11100010
-  #b00000000
-  #b11010010
-  #b10111010
-  #b10111010
-  #b00000000
-  #b11010010
-  #b11100010
-  #b11110010
-  #b11100010
-  #b11010010
-  #b11010010
-  #b11010010
-  #b11010010
-  #b11100010
-  #b11100010
-  #b11010010
-  #b11100010
-  #b11110010
-
-  #b00000001
-  )
-
+ (include "testsong.bin")
  (program-complete)
  (asm
 ".incbin \"handwave.chr\"
