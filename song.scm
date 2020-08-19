@@ -96,25 +96,54 @@
 ;; process the commands in a song
 ;; commands are syntax object list
 (define (process-commands commands)
-  (gvector-add! *output* "(bytes")
-  (for ([command-syntax commands])
-       (let ([command (syntax-e command-syntax)])
-	 (cond
-	  [else  ; individual note
-	   (cond
-	    [(integer? command)
-	     (when (or (< command 0) (> command 15))
-		   (error 'process-commands "note index ~a out of range" command-syntax))
-	     (emit-single-note command)]
-	     [else
-	   (let ([note-id (note-name-to-id command)])
-	     (when (not note-id)
-		   (error 'process-commands "not a note name: ~a" command-syntax))
-	     (emit-single-note note-id))])])))
+  (let ([cur-command-syntax null])
+    (gvector-add! *output* "(bytes")
+    (when (not (empty? commands))
+	  (set! cur-command-syntax (car commands))
+	  (set! commands (cdr commands))
+	  (for ([i (in-naturals)])
+	       (let ([command (syntax-e cur-command-syntax)])
+		 (cond
+		  [(eq? command 'rest)
+		   (when (empty? commands)
+			 (error 'process-commands "Evaluating ~a: end of song reached" cur-command-syntax))
+		   (emit-rest (car commands))
+		   (set! commands (cdr commands))]
+		  [else  ; individual note
+		   (emit-single-note cur-command-syntax)]))
+	       #:break (empty? commands)
+	       (set! cur-command-syntax (car commands))
+	       (set! commands (cdr commands))
+	       )))
   (gvector-add! *output* "#b00000001")
   (gvector-add! *output* ")"))
 
-(define (emit-single-note note-id)
+;; Emit one rest
+(define (emit-rest rest-syntax)
+  (let ([rest (syntax-e rest-syntax)])
+    (when (not (integer? rest))
+	  (error 'emit-rest "~a is not a number" rest-syntax))
+    (when (or (< rest 1) (> rest 32))
+	  (error 'emit-rest "~a is not in range 1-32" rest-syntax))
+    (gvector-add! *output* (format "#b~a000" (exact-to-five-bits (- rest 1))))))
+
+;; Emit one note by ID or name
+(define (emit-single-note note-syntax)
+  (let ([note (syntax-e note-syntax)])
+    (cond
+     [(integer? note)
+      (when (or (< note 0) (> note 15))
+	    (error 'emit-single-note "note index ~a out of range" note-syntax))
+      (emit-single-note-by-id note)]
+     [else
+      (let ([note-id (note-name-to-id note)])
+	(when (not note-id)
+	      (error 'process-commands "not a note name: ~a" note-syntax))
+	(emit-single-note-by-id note-id))])))
+
+
+
+(define (emit-single-note-by-id note-id)
   (gvector-add! *output* (format "#b1~a010" (exact-to-four-bits note-id))))
 
 (define (exact-to-four-bits exact)
@@ -123,6 +152,10 @@
 	[twos (if (eq? 0 (bitwise-and 2 exact)) "0" "1")]
 	[ones (if (eq? 0 (bitwise-and 1 exact)) "0" "1")])
   (format "~a~a~a~a" eights fours twos ones)))
+
+(define (exact-to-five-bits exact)
+  (let ([sixteens (if (eq? 0 (bitwise-and 16 exact)) "0" "1")])
+    (format "~a~a" sixteens (exact-to-four-bits exact))))
 
 ;; returns the ID of the note with the specified name, or #f if no handwave ID is holding that note
 (define (note-name-to-id note-name)
