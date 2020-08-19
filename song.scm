@@ -101,10 +101,16 @@
        (let ([command (syntax-e command-syntax)])
 	 (cond
 	  [else  ; individual note
+	   (cond
+	    [(integer? command)
+	     (when (or (< command 0) (> command 15))
+		   (error 'process-commands "note index ~a out of range" command-syntax))
+	     (emit-single-note command)]
+	     [else
 	   (let ([note-id (note-name-to-id command)])
 	     (when (not note-id)
 		   (error 'process-commands "not a note name: ~a" command-syntax))
-	     (emit-single-note note-id))])))
+	     (emit-single-note note-id))])])))
   (gvector-add! *output* "#b00000001")
   (gvector-add! *output* ")"))
 
