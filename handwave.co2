@@ -30,6 +30,7 @@
  (defconst a-button-chr 4)
  (defconst staff-chr 5)
  (defconst note-chr 6)
+ (defconst measure-staff-chr 7)
 
  ;; background rendering constants
  (defconst background-start-offset-1 #x2100)
@@ -430,7 +431,7 @@
  (defsub (plot-some-notes notes)
    (loop n 0 8
 	 (if (eq? 0 (and notes #x1))
-	     (set! REG-PPU-DATA staff-chr)
+	     (set! REG-PPU-DATA (if (eq? 0 (and g-scroll-low #b00011111)) measure-staff-chr staff-chr))
 	     (set! REG-PPU-DATA note-chr))
 	 (set! notes (>> notes 1))))
 
@@ -526,7 +527,7 @@
  ;; from wave0 (high note) to wave15 (low note)
  ;; high-order byte, low-order byte
  (deflabel notes-c-major)
- (include "testsong.not")
+ (include "song.not")
 
  ;; Main palette
  (deflabel palette)
@@ -584,19 +585,14 @@
  ;; NNNN: either index of note to sound or low-order 4 bits of beats to rest
  ;;
  ;; R: If note is sounded, setting this to 1 indicates this is last note to
- ;;  sound on this beat.  beat. If CC is 00, this is high order bit of beats to
+ ;;  sound on this beat. If CC is 00, this is high order bit of beats to
  ;;  rest
  ;;
  ;; - IN DIRECTIVE MODE -
  ;; CC: control
  ;; - 00: end of song. Stop rendering new notes
  (deflabel song1)
- ;; Mary Had A Little Lamb
- ;; 14 - low c
- ;; 12 - low d
- ;; 10 - low e
- ;; 7  - low g
- (include "testsong.bin")
+ (include "song.dat")
  (program-complete)
  (asm
 ".incbin \"handwave.chr\"

@@ -11,7 +11,7 @@
 
 (define *errors* (make-gvector))
 (define *output* (make-gvector))
-(define *current-note-bindings* (make-hash))
+(define *current-note-bindings* (make-hash))  ; binding from note ID to note name
 (define *initial-note-bindings* (make-gvector))
 (define *note-name->bytes* (make-hash))
 
@@ -93,9 +93,37 @@
 	   (gvector-add! *initial-note-bindings* note)
 	   (set! i (add1 i))))))
 
+;; process the commands in a song
+;; commands are syntax object list
 (define (process-commands commands)
-  ;; todo
-  #f)
+  (gvector-add! *output* "(bytes")
+  (for ([command-syntax commands])
+       (let ([command (syntax-e command-syntax)])
+	 (cond
+	  [else  ; individual note
+	   (let ([note-id (note-name-to-id command)])
+	     (when (not note-id)
+		   (error 'process-commands "not a note name: ~a" command-syntax))
+	     (emit-single-note note-id))])))
+  (gvector-add! *output* "#b00000001")
+  (gvector-add! *output* ")"))
+
+(define (emit-single-note note-id)
+  (gvector-add! *output* (format "#b1~a010" (exact-to-four-bits note-id))))
+
+(define (exact-to-four-bits exact)
+  (let ([eights (if (eq? 0 (bitwise-and 8 exact)) "0" "1")]
+	[fours (if (eq? 0 (bitwise-and 4 exact)) "0" "1")]
+	[twos (if (eq? 0 (bitwise-and 2 exact)) "0" "1")]
+	[ones (if (eq? 0 (bitwise-and 1 exact)) "0" "1")])
+  (format "~a~a~a~a" eights fours twos ones)))
+
+;; returns the ID of the note with the specified name, or #f if no handwave ID is holding that note
+(define (note-name-to-id note-name)
+  (let ([result (for/last ([i 17])
+			  #:final (eq? note-name (hash-ref *current-note-bindings* i #f))
+			  i)])
+    (if (eq? result 17) #f result)))
 
 (define (note-name-to-freq note-name)
   (cond [(not (hash-has-key? *note-name->bytes* note-name)) (error 'note-name-to-freq "~a is not a note" note-name)]

@@ -5,5 +5,8 @@ ASM6=asm6.exe
 
 default: handwave.nes
 
-handwave.nes: handwave.co2 handwave.chr
+handwave.nes: handwave.co2 handwave.chr song.dat song.not
 	racket ${CO2_PATH} --asm ${ASM6} -o handwave.nes handwave.co2
+
+song.dat song.not &: first.sng
+	racket -l errortrace -t song.scm -- -o song.dat -n song.not first.sng
