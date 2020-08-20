@@ -106,6 +106,7 @@
    (load-bg #x00)
    (load-palette)
    (load-staff)
+   (color-staff)
    (init-sprites))
 
  (defsub (load-bg chr-code)
@@ -128,6 +129,22 @@
    (poke! REG-PPU-ADDR (high background-start-offset-2))
    (poke! REG-PPU-ADDR (low background-start-offset-2))
    (plot-staff-on-one-scroll-buffer))
+
+ (defsub (color-staff)
+   (stripe-staff #x23 #xD8 #b01010101)
+   (stripe-staff #x23 #xE0 #b10101010)
+   (stripe-staff #x23 #xE8 #b11111111)
+
+   (stripe-staff #x27 #xD8 #b01010101)
+   (stripe-staff #x27 #xE0 #b10101010)
+   (stripe-staff #x27 #xE8 #b11111111))
+
+ ;; configure an entire row of the attribute table with the specified value
+ (defsub (stripe-staff starting-at-high starting-at-low with-value)
+   (poke! REG-PPU-ADDR starting-at-high)
+   (poke! REG-PPU-ADDR starting-at-low)
+   (loop n 0 8
+	 (poke! REG-PPU-DATA with-value)))
 
  (defsub (plot-staff-on-one-scroll-buffer)
    ;; 16 rows of buttons, so we do this step 32 * 16 = 512 times
@@ -533,13 +550,20 @@
  (deflabel palette)
  (bytes
   #x0f ; background color
-  #x20 #x15 #x14  ; bg palette 1
-  #x0f
-  #x01 #x2A #x12  ; bg palette 2
-  #x0f
-  #x11 #x11 #x31  ; bg palette 3
-  #x0f
-  #x20 #x38 #xcc  ; bg palette 4
+  #x20 #x05 #x14  ; bg palette 1 (player 1)
+  #x0F
+  #x20 #x1A #x14  ; bg palette 2 (player 2)
+  #x0F
+  #x20 #x01 #x14  ; bg palette 3 (player 3)
+  #x0F
+  #x20 #x28 #x14  ; bg palette 4 (player 4)
+  ;; #x20 #x15 #x14  ; bg palette 1
+  ;; #x0f
+  ;; #x01 #x2A #x12  ; bg palette 2
+  ;; #x0f
+  ;; #x11 #x11 #x31  ; bg palette 3
+  ;; #x0f
+  ;; #x20 #x38 #xcc  ; bg palette 4
 
   #x0F
   #x20 #x15 #x14  ; fg palette 1 (player 1)
