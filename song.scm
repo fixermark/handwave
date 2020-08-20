@@ -104,19 +104,32 @@
 	  (for ([i (in-naturals)])
 	       (let ([command (syntax-e cur-command-syntax)])
 		 (cond
-		  [(eq? command 'rest)
+		  [(eq? command 'rest)  ; rest
 		   (when (empty? commands)
 			 (error 'process-commands "Evaluating ~a: end of song reached" cur-command-syntax))
 		   (emit-rest (car commands))
 		   (set! commands (cdr commands))]
+		  [(list? command)  ; maybe chord?
+		   (if (eq? 'chord (syntax-e (car command)))
+			 (emit-chord (cdr command))
+		   (error 'process-commands "Unknown command ~a" cur-command-syntax))]
 		  [else  ; individual note
-		   (emit-single-note cur-command-syntax)]))
+		   (emit-single-note cur-command-syntax #f)]))
 	       #:break (empty? commands)
 	       (set! cur-command-syntax (car commands))
 	       (set! commands (cdr commands))
 	       )))
   (gvector-add! *output* "#b00000001")
   (gvector-add! *output* ")"))
+
+;; emit chord
+(define (emit-chord chord-notes-syntax)
+  (let ([first-note (car chord-notes-syntax)]
+	[other-notes (cdr chord-notes-syntax)])
+    (for ([note-syntax other-notes])
+	 (emit-single-note note-syntax #t))
+    (emit-single-note first-note #f)))
+
 
 ;; Emit one rest
 (define (emit-rest rest-syntax)
@@ -128,23 +141,23 @@
     (gvector-add! *output* (format "#b~a000" (exact-to-five-bits (- rest 1))))))
 
 ;; Emit one note by ID or name
-(define (emit-single-note note-syntax)
+(define (emit-single-note note-syntax of-chord)
   (let ([note (syntax-e note-syntax)])
     (cond
      [(integer? note)
       (when (or (< note 0) (> note 15))
 	    (error 'emit-single-note "note index ~a out of range" note-syntax))
-      (emit-single-note-by-id note)]
+      (emit-single-note-by-id note of-chord)]
      [else
       (let ([note-id (note-name-to-id note)])
 	(when (not note-id)
 	      (error 'process-commands "not a note name: ~a" note-syntax))
-	(emit-single-note-by-id note-id))])))
+	(emit-single-note-by-id note-id of-chord))])))
 
 
 
-(define (emit-single-note-by-id note-id)
-  (gvector-add! *output* (format "#b1~a010" (exact-to-four-bits note-id))))
+(define (emit-single-note-by-id note-id of-chord)
+  (gvector-add! *output* (format "#b~a~a010" (if of-chord "0" "1") (exact-to-four-bits note-id))))
 
 (define (exact-to-four-bits exact)
   (let ([eights (if (eq? 0 (bitwise-and 8 exact)) "0" "1")]
