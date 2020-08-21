@@ -1,5 +1,7 @@
 ;; -*- mode: scheme; -*-
 
+;; TODO: netcode has busted up regular playback logic. Address.
+
 (do
 
  (nes-header #:num-prg 1 #:num-chr 1 #:mapper 0 #:mirroring vertical)
@@ -15,6 +17,7 @@
  (defaddr sprite-pos-x #x310) ;; current sprite position (x coord), 16 bytes
  (defaddr sprite-pos-y #x320)  ;; current sprite position (y coord), 16 bytes
  (defaddr sprite-anim-frame #x330)  ;; sprite animation frame counter, 16 bytes
+ (defaddr notes-to-trigger #x340)  ;; notes to trigger on this beat and previous beat, 4 bytes (2 bytes of 8 notes * 2 beats)
 
  (defconst ppu-name-table-0 #x2000)
  (defconst ppu-name-table-1 #x2400)
@@ -22,6 +25,7 @@
 
  (defconst game-on-ppu-ctrl #b10000000)
  (defconst ppu-ctrl-vram-increment-mask #b00000100)
+ (defconst netcode-sprite-id 17)
 
 
  ;; CHRs used by sprites
@@ -32,6 +36,7 @@
  (defconst staff-chr 5)
  (defconst note-chr 6)
  (defconst measure-staff-chr 7)
+ (defconst netcode-chr #x10)
  (defconst unused-note-chr #x11)
 
  ;; background rendering constants
@@ -70,6 +75,7 @@
  (defvar g-scroll-delay-ctr 0)
  ;; song control
  (defvar g-playing 0) ; are we playing a song?
+ (defvar g-netcode 0) ; netcode enabled?
  (defvar g-next-frame-render-notes-high-byte 0)
  (defvar g-next-frame-render-notes-low-byte 0)
  (defvar g-next-frame-play-notes-high-byte 0)
@@ -81,7 +87,7 @@
 
 
  ;; debugging
- (defvar g-debug 0)
+ (defvar g-debug #x42)
 
  (defvector (reset)
    (init-system)
@@ -104,6 +110,8 @@
    (poke! notes-to-sound 1 0)
    (poke! active-handwaves 0 0)
    (poke! active-handwaves 1 0)
+   (loop n 0 4
+	 (poke! notes-to-trigger n 0))
    (asm
     ;; go into an infite loop - vblank interrupt takes over
     "loop: jmp loop"))
@@ -113,7 +121,10 @@
    (load-palette)
    (load-staff)
    (color-staff)
-   (init-sprites))
+   (init-sprites)
+   (set-sprite-id! netcode-sprite-id 0)
+   (set-sprite-attr! netcode-sprite-id 0))
+
 
  (defsub (load-bg chr-code)
    (loop n 0 3
@@ -193,10 +204,16 @@
    (cond
     [(not g-playing)  ; waiting for game start
      (check-wave-activations)
+     (set-sprite-y! netcode-sprite-id 200)
+     (set-sprite-x! netcode-sprite-id 200)
      (when (button-pressed 0 joypad-start)
-	   (set! g-playing #t))
+	   (set! g-playing #t)
+	   (set-sprite-y! netcode-sprite-id 254)
+	   (set-sprite-x! netcode-sprite-id 254))
      (when (button-pressed 0 joypad-select)
 	   (clear-active-handwaves))
+     (when (button-pressed 0 joypad-down)
+	   (toggle-netcode))
      ]
     [ else  ; playing game
       (inc gframe)
@@ -216,6 +233,11 @@
    (loop n 0 16
 	 (set-sprite-id! n unused-note-chr)))
 
+ ;; toggle netcode mode
+ (defsub (toggle-netcode)
+   (set! g-netcode (if g-netcode 0 1))
+   (set-sprite-id! netcode-sprite-id (if g-netcode netcode-chr 0)))
+
  ;; check controller inputs for wave activations
  (defsub (check-wave-activations)
    (let ((offset1) (offset2))
@@ -229,8 +251,11 @@
  (defsub (on-wave-triggered which-wave)
    (poke! sprite-anim-frame which-wave 0)
    (when (not g-playing)
-	 (enable-handwave which-wave))
-   (sound-note which-wave))
+	 (enable-handwave which-wave)
+	 (sound-note which-wave))
+   (if g-netcode
+       (prime-note which-wave)
+       (sound-note which-wave)))
 
  ;; switches on a pair of handwaves for play this game
  (defsub (enable-handwave which-wave)
@@ -244,23 +269,21 @@
 
  ;; adds this handwave and the next one higher to the active handwave mask
  (defsub (add-to-active-handwaves wave-id-low)
-   (let ([active])
-     (if (> wave-id-low 7)
-	 (do
-	     (set! active 1)
-	     (set! wave-id-low (- wave-id-low 8)))
-	 (set! active 0))
-     (poke! active-handwaves active (or (peek active-handwaves active) (roll-left-n #x3 wave-id-low)))))
+   (let ([active] [bitfield])
+     (set-multiple! active bitfield (index-to-offset-field wave-id-low))
+     (poke! active-handwaves active (or (peek active-handwaves active) bitfield))))
+
+ ;; primes a note to be sounded within the next 2 cycles (netcode mode)
+ (defsub (prime-note which-note)
+   (let ([bank] [bitfield])
+     (set-multiple! bank bitfield (index-to-offset-field which-note))
+     (poke! notes-to-trigger bank (or (peek notes-to-trigger bank) bitfield))))
 
  ;; primes a note to be sounded this cycle
  (defsub (sound-note which-note)
-   (let ((bank))
-     (if (> which-note 7)
-	 (do
-	     (set! bank 1)
-	     (set! which-note (- which-note 8)))
-	 (set! bank 0))
-     (poke! notes-to-sound bank (or (peek notes-to-sound bank) (roll-left-n #x1 which-note)))))
+   (let ([bank] [bitfield])
+     (set-multiple! bank bitfield (index-to-offset-field which-note))
+     (poke! notes-to-sound bank (or (peek notes-to-sound bank) bitfield))))
 
  ;; utility function to roll a value n to the left
  (defsub (roll-left-n value count)
@@ -272,6 +295,16 @@
 	 (set! value (<< value 1)))
    (return value))
 
+ ;; utility function to convert a value in range 0-15 to a byte offset and a bitfield
+ ;; returns (byte-offset, bitfield)
+ (defsub (index-to-offset-field index)
+   (let ([offset])
+     (if (> index 7)
+   	 (do
+   	     (set! index (- index 8))
+	     (set! offset 1))
+	 (set! offset 0))
+     (return offset (roll-left-n 1 index))))
 
  ;; updates one frame of note draw animation
  (defsub (step-draw-note)
@@ -388,9 +421,13 @@
       ((eq? #x02 (and cur-note #b00000110))  ; strike-note
        (let ([note-value])
 	 (set! note-value (and #b00001111 (>> cur-note 3)))
-	 (when (note-is-automated note-value)
+	 (if (note-is-automated note-value)
 	       (set-multiple! high-byte-notes low-byte-notes
-			      (add-note-index-to-mask note-value high-byte-notes low-byte-notes))))
+			      (add-note-index-to-mask note-value high-byte-notes low-byte-notes))
+	       (when g-netcode
+		     (when (note-is-triggered note-value)
+			   (set-multiple! high-byte-notes low-byte-notes
+					  (add-note-index-to-mask note-value high-byte-notes low-byte-notes))))))
        (inc-g-song-play-index)
        (if rest-after-this-note
 	   (return #x1 high-byte-notes low-byte-notes)
@@ -409,6 +446,15 @@
    	     (set! which-note (- which-note 8)))
    	 (set! offset 0))
      (return (eq? 0 (and (peek active-handwaves offset) (roll-left-n #x1 which-note))))))
+
+ ;; returns #t if specified note should be triggered
+ (defsub (note-is-triggered which-note)
+   (let ([bank] [bitfield])
+     (set-multiple! bank bitfield (index-to-offset-field which-note))
+     (loop n 0 2
+	   (when (and (peek notes-to-trigger (+ (<< n 1) bank)) bitfield)
+		 (return #t))))
+   (return #f))
 
  (defsub (inc-g-song-play-index)
    (let ((tmp))
