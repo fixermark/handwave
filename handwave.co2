@@ -11,9 +11,10 @@
  (defaddr pad-data-last-frame #x304)  ;; pad data from last frame, 4 bytes
  (defaddr pad-press #x308)  ;; which buttons were pressed this frame, 4 bytes
  (defaddr notes-to-sound #x30c)  ;; notes to start sounding this frame, 2 bytes
- (defaddr sprite-pos-x #x30e) ;; current sprite position (x coord), 16 bytes
- (defaddr sprite-pos-y #x31e)  ;; current sprite position (y coord), 16 bytes
- (defaddr sprite-anim-frame #x32e)  ;; sprite animation frame counter, 16 bytes
+ (defaddr active-handwaves #x30e) ;; bitfield of player-controlled handwaves, 2 bytes
+ (defaddr sprite-pos-x #x310) ;; current sprite position (x coord), 16 bytes
+ (defaddr sprite-pos-y #x320)  ;; current sprite position (y coord), 16 bytes
+ (defaddr sprite-anim-frame #x330)  ;; sprite animation frame counter, 16 bytes
 
  (defconst ppu-name-table-0 #x2000)
  (defconst ppu-name-table-1 #x2400)
@@ -31,6 +32,7 @@
  (defconst staff-chr 5)
  (defconst note-chr 6)
  (defconst measure-staff-chr 7)
+ (defconst unused-note-chr #x11)
 
  ;; background rendering constants
  (defconst background-start-offset-1 #x2100)
@@ -98,6 +100,10 @@
    (set! g-song-play-rest render-to-playback-beat-gap)
    (set-pointer! g-song-render-index song1)
    (set-pointer! g-song-play-index song1)
+   (poke! notes-to-sound 0 0)
+   (poke! notes-to-sound 1 0)
+   (poke! active-handwaves 0 0)
+   (poke! active-handwaves 1 0)
    (asm
     ;; go into an infite loop - vblank interrupt takes over
     "loop: jmp loop"))
@@ -159,8 +165,10 @@
    (loop n 0 num-sprites
 	 (set-sprite-x! n sprite-x-offset)
 	 (set-sprite-y! n (+ first-sprite-y-offset (<< n 3)))
+	 ;; TODO(mark): move this logic to handwave-enable
 	 ;; sprite ID rotates 1 to 4
-	 (set-sprite-id! n (+ 1 (and n #x03)))
+	 ;; (set-sprite-id! n (+ 1 (and n #x03)))
+	 (set-sprite-id! n unused-note-chr)
 	 ;; every 4 sprites get same palette
 	 (set-sprite-attr! n (>> n 2))
 	 (poke! sprite-pos-x n sprite-x-offset)
@@ -179,11 +187,21 @@
    (set! REG-PPU-SCROLL g-scroll-low)
    (set! REG-PPU-SCROLL 0)
    (set! REG-PPU-CTRL (or game-on-ppu-ctrl g-scroll-high))
+
    ;;; END TIMING CRITICAL CODE
-   (inc gframe)
-   (update-scroll)
    (read-joypads)
-   (check-wave-activations)
+   (cond
+    [(not g-playing)  ; waiting for game start
+     (check-wave-activations)
+     (when (button-pressed 0 joypad-start)
+	   (set! g-playing #t))
+     (when (button-pressed 0 joypad-select)
+	   (clear-active-handwaves))
+     ]
+    [ else  ; playing game
+      (inc gframe)
+      (update-scroll)
+      (check-wave-activations)])
    (play-notes)
    (anim-sprites))
 
@@ -191,6 +209,13 @@
 
 
  ;;;; GAME LOGIC
+ ;; wipe out active handwave list
+ (defsub (clear-active-handwaves)
+   (poke! active-handwaves 0 0)
+   (poke! active-handwaves 1 0)
+   (loop n 0 16
+	 (set-sprite-id! n unused-note-chr)))
+
  ;; check controller inputs for wave activations
  (defsub (check-wave-activations)
    (let ((offset1) (offset2))
@@ -203,7 +228,29 @@
 
  (defsub (on-wave-triggered which-wave)
    (poke! sprite-anim-frame which-wave 0)
+   (when (not g-playing)
+	 (enable-handwave which-wave))
    (sound-note which-wave))
+
+ ;; switches on a pair of handwaves for play this game
+ (defsub (enable-handwave which-wave)
+   (let ([wave-id-low] [wave-id-high])
+     (set! wave-id-low (and which-wave #b11111110))
+     (set! wave-id-high (+ wave-id-low 1))
+     (add-to-active-handwaves wave-id-low)
+     ;; display the sprites
+     (set-sprite-id! wave-id-low (+ 1 (and wave-id-low #x03)))
+     (set-sprite-id! wave-id-high (+ 1 (and wave-id-high #x03)))))
+
+ ;; adds this handwave and the next one higher to the active handwave mask
+ (defsub (add-to-active-handwaves wave-id-low)
+   (let ([active])
+     (if (> wave-id-low 7)
+	 (do
+	     (set! active 1)
+	     (set! wave-id-low (- wave-id-low 8)))
+	 (set! active 0))
+     (poke! active-handwaves active (or (peek active-handwaves active) (roll-left-n #x3 wave-id-low)))))
 
  ;; primes a note to be sounded this cycle
  (defsub (sound-note which-note)
@@ -326,7 +373,6 @@
  (defsub (handle-next-play-note high-byte-notes low-byte-notes)
    (let ((cur-note) (rest-after-this-note))
      (set! cur-note (peek g-song-play-index))
-     (set! g-debug cur-note)
      (set! rest-after-this-note (and #b10000000 cur-note))
      (cond
       ((and cur-note #x1)  ; directive mode
@@ -340,14 +386,31 @@
 	high-byte-notes
 	low-byte-notes))
       ((eq? #x02 (and cur-note #b00000110))  ; strike-note
-       (set-multiple! high-byte-notes low-byte-notes
-		      (add-note-index-to-mask (and #b00001111 (>> cur-note 3)) high-byte-notes low-byte-notes))
+       (let ([note-value])
+	 (set! note-value (and #b00001111 (>> cur-note 3)))
+	 (when (note-is-automated note-value)
+	       (set-multiple! high-byte-notes low-byte-notes
+			      (add-note-index-to-mask note-value high-byte-notes low-byte-notes))))
        (inc-g-song-play-index)
        (if rest-after-this-note
 	   (return #x1 high-byte-notes low-byte-notes)
 	   (return 0 high-byte-notes low-byte-notes))))))
 
-  (defsub (inc-g-song-play-index)
+
+ ;; returns true if note is in auto-play mode
+ ;; TODO(mtomczak): This form of converting a const 0-15 into a 2-byte bitfield shows up
+ ;; three times in the code. Should be able to consolidate
+ (defsub (note-is-automated which-note)
+   (set! g-debug which-note)
+   (let ([offset])
+     (if (> which-note 7)
+   	 (do
+   	     (set! offset 1)
+   	     (set! which-note (- which-note 8)))
+   	 (set! offset 0))
+     (return (eq? 0 (and (peek active-handwaves offset) (roll-left-n #x1 which-note))))))
+
+ (defsub (inc-g-song-play-index)
    (let ((tmp))
      (set! tmp 1)
      (set-pointer! g-song-play-index (+ g-song-play-index tmp))))
