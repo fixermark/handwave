@@ -65,6 +65,8 @@
  ;; code start
  (program-begin #xc000)
 
+ ;; debugging
+ (defvar g-debug #x42)
  ;; a global frame counter
  (defvar gframe 0)
  ;; which of the 2 pulse waves we are playing from, 0 for P1, 1 for P2
@@ -86,8 +88,6 @@
  (defvar g-song-play-rest 0)  ; if > 0, # of beats to rest before continuing playing notes
 
 
- ;; debugging
- (defvar g-debug #x42)
 
  (defvector (reset)
    (init-system)
@@ -250,12 +250,13 @@
 
  (defsub (on-wave-triggered which-wave)
    (poke! sprite-anim-frame which-wave 0)
-   (when (not g-playing)
-	 (enable-handwave which-wave)
-	 (sound-note which-wave))
-   (if g-netcode
-       (prime-note which-wave)
-       (sound-note which-wave)))
+   (if (not g-playing)
+       (do
+	   (enable-handwave which-wave)
+	   (sound-note which-wave))
+       (if g-netcode
+	   (prime-note which-wave)
+	   (sound-note which-wave))))
 
  ;; switches on a pair of handwaves for play this game
  (defsub (enable-handwave which-wave)
@@ -270,19 +271,19 @@
  ;; adds this handwave and the next one higher to the active handwave mask
  (defsub (add-to-active-handwaves wave-id-low)
    (let ([active] [bitfield])
-     (set-multiple! active bitfield (index-to-offset-field wave-id-low))
+     (set-multiple! active bitfield (index-to-offset-field wave-id-low #x3))
      (poke! active-handwaves active (or (peek active-handwaves active) bitfield))))
 
  ;; primes a note to be sounded within the next 2 cycles (netcode mode)
  (defsub (prime-note which-note)
    (let ([bank] [bitfield])
-     (set-multiple! bank bitfield (index-to-offset-field which-note))
+     (set-multiple! bank bitfield (index-to-offset-field which-note 1))
      (poke! notes-to-trigger bank (or (peek notes-to-trigger bank) bitfield))))
 
  ;; primes a note to be sounded this cycle
  (defsub (sound-note which-note)
    (let ([bank] [bitfield])
-     (set-multiple! bank bitfield (index-to-offset-field which-note))
+     (set-multiple! bank bitfield (index-to-offset-field which-note 1))
      (poke! notes-to-sound bank (or (peek notes-to-sound bank) bitfield))))
 
  ;; utility function to roll a value n to the left
@@ -295,16 +296,17 @@
 	 (set! value (<< value 1)))
    (return value))
 
- ;; utility function to convert a value in range 0-15 to a byte offset and a bitfield
+ ;; utility function to convert a value in range 0-15 to a byte offset and a bitfield, where "value" is the base to roll to the target bitfield
  ;; returns (byte-offset, bitfield)
- (defsub (index-to-offset-field index)
-   (let ([offset])
+ (defsub (index-to-offset-field index value)
+   (let ([offset] [bitfield])
      (if (> index 7)
    	 (do
    	     (set! index (- index 8))
 	     (set! offset 1))
 	 (set! offset 0))
-     (return offset (roll-left-n 1 index))))
+     (set! bitfield (roll-left-n value index))
+     (return offset bitfield)))
 
  ;; updates one frame of note draw animation
  (defsub (step-draw-note)
@@ -438,7 +440,6 @@
  ;; TODO(mtomczak): This form of converting a const 0-15 into a 2-byte bitfield shows up
  ;; three times in the code. Should be able to consolidate
  (defsub (note-is-automated which-note)
-   (set! g-debug which-note)
    (let ([offset])
      (if (> which-note 7)
    	 (do
@@ -450,7 +451,7 @@
  ;; returns #t if specified note should be triggered
  (defsub (note-is-triggered which-note)
    (let ([bank] [bitfield])
-     (set-multiple! bank bitfield (index-to-offset-field which-note))
+     (set-multiple! bank bitfield (index-to-offset-field which-note 1))
      (loop n 0 2
 	   (when (and (peek notes-to-trigger (+ (<< n 1) bank)) bitfield)
 		 (return #t))))
