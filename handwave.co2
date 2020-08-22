@@ -17,7 +17,7 @@
  (defaddr sprite-pos-x #x310) ;; current sprite position (x coord), 16 bytes
  (defaddr sprite-pos-y #x320)  ;; current sprite position (y coord), 16 bytes
  (defaddr sprite-anim-frame #x330)  ;; sprite animation frame counter, 16 bytes
- (defaddr notes-to-trigger #x340)  ;; notes to trigger on this beat and previous beat, 6 bytes (2 bytes of 8 notes * 3 beats)
+ (defaddr notes-to-trigger #x340)  ;; notes to trigger on this beat and previous beat, 8 bytes (2 bytes of 8 notes * 4 beats)
 
  (defconst ppu-name-table-0 #x2000)
  (defconst ppu-name-table-1 #x2400)
@@ -26,6 +26,8 @@
  (defconst game-on-ppu-ctrl #b10000000)
  (defconst ppu-ctrl-vram-increment-mask #b00000100)
  (defconst netcode-sprite-id 17)
+ (defconst first-netline-sprite-id 18)
+ (defconst netline-x-offset 72)
 
 
  ;; CHRs used by sprites
@@ -36,7 +38,8 @@
  (defconst staff-chr 5)
  (defconst note-chr 6)
  (defconst measure-staff-chr 7)
- (defconst netcode-chr #x10)
+ (defconst netcode-line-chr 8)
+ (defconst netcode-enabled-icon-chr #x10)
  (defconst unused-note-chr #x11)
 
  ;; background rendering constants
@@ -176,15 +179,19 @@
    (loop n 0 num-sprites
 	 (set-sprite-x! n sprite-x-offset)
 	 (set-sprite-y! n (+ first-sprite-y-offset (<< n 3)))
-	 ;; TODO(mark): move this logic to handwave-enable
-	 ;; sprite ID rotates 1 to 4
-	 ;; (set-sprite-id! n (+ 1 (and n #x03)))
 	 (set-sprite-id! n unused-note-chr)
 	 ;; every 4 sprites get same palette
 	 (set-sprite-attr! n (>> n 2))
 	 (poke! sprite-pos-x n sprite-x-offset)
 	 (poke! sprite-pos-y n (+ first-sprite-y-offset (<< n 3)))
-	 (poke! sprite-anim-frame n ANIM-STOPPED)))
+	 (poke! sprite-anim-frame n ANIM-STOPPED))
+   (let ([offset])
+     (set! offset (+ 16 first-netline-sprite-id))
+     (loop n first-netline-sprite-id offset
+	   (set-sprite-x! n netline-x-offset)
+	   (set-sprite-y! n 254)
+	   (set-sprite-id! n netcode-line-chr)
+	   (set-sprite-attr! n 0))))
 
  (defvector (nmi)
    ;;; TIMING CRITICAL CODE: must finish during vblank
@@ -236,7 +243,20 @@
  ;; toggle netcode mode
  (defsub (toggle-netcode)
    (set! g-netcode (if g-netcode 0 1))
-   (set-sprite-id! netcode-sprite-id (if g-netcode netcode-chr 0)))
+   (set-sprite-id! netcode-sprite-id (if g-netcode netcode-enabled-icon-chr 0))
+   (if g-netcode (show-netline) (hide-netline)))
+
+ (defsub (show-netline)
+   (let ([offset])
+     (set! offset (+ 16 first-netline-sprite-id))
+     (loop n first-netline-sprite-id offset
+	 (set-sprite-y! n (+ first-sprite-y-offset (<< (- n first-netline-sprite-id) 3))))))
+
+ (defsub (hide-netline)
+   (let ([offset])
+     (set! offset (+ 16 first-netline-sprite-id))
+     (loop n first-netline-sprite-id offset
+	   (set-sprite-y! n 254))))
 
  ;; check controller inputs for wave activations
  (defsub (check-wave-activations)
@@ -446,7 +466,7 @@
  (defsub (note-is-triggered which-note)
    (let ([bank] [bitfield])
      (set-multiple! bank bitfield (index-to-offset-field which-note 1))
-     (loop n 0 3
+     (loop n 0 4
 	   (when (and (peek notes-to-trigger (+ (<< n 1) bank)) bitfield)
 		 (return #t))))
    (return #f))
@@ -458,6 +478,8 @@
 
  ;; increments the buffer holding netcode cached bells
  (defsub (step-netcode-buffer)
+   (poke! notes-to-trigger 6 (peek notes-to-trigger 4))
+   (poke! notes-to-trigger 7 (peek notes-to-trigger 5))
    (poke! notes-to-trigger 4 (peek notes-to-trigger 2))
    (poke! notes-to-trigger 5 (peek notes-to-trigger 3))
    (poke! notes-to-trigger 2 (peek notes-to-trigger 0))
