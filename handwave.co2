@@ -547,7 +547,7 @@
 	   (if (eq? g-scroll-low 0)
 	       (set! g-scroll-high (and (not g-scroll-high) #x1))
 	       #f)
-	 (set! g-scroll-delay-ctr 1)
+	 (set! g-scroll-delay-ctr 0)
 	 (if (eq? 7 (and g-scroll-low #b00000111))
 	     (step-draw-note)
 	     #f)
