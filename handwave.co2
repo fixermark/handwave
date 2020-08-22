@@ -437,16 +437,10 @@
 
 
  ;; returns true if note is in auto-play mode
- ;; TODO(mtomczak): This form of converting a const 0-15 into a 2-byte bitfield shows up
- ;; three times in the code. Should be able to consolidate
  (defsub (note-is-automated which-note)
-   (let ([offset])
-     (if (> which-note 7)
-   	 (do
-   	     (set! offset 1)
-   	     (set! which-note (- which-note 8)))
-   	 (set! offset 0))
-     (return (eq? 0 (and (peek active-handwaves offset) (roll-left-n #x1 which-note))))))
+   (let ([offset] [bitfield])
+     (set-multiple! offset bitfield (index-to-offset-field which-note 1))
+     (return (eq? 0 (and (peek active-handwaves offset) bitfield)))))
 
  ;; returns #t if specified note should be triggered
  (defsub (note-is-triggered which-note)
@@ -461,6 +455,13 @@
    (let ((tmp))
      (set! tmp 1)
      (set-pointer! g-song-play-index (+ g-song-play-index tmp))))
+
+ ;; increments the buffer holding netcode cached bells
+ (defsub (step-netcode-buffer)
+   (poke! notes-to-trigger 2 (peek notes-to-trigger 0))
+   (poke! notes-to-trigger 3 (peek notes-to-trigger 1))
+   (poke! notes-to-trigger 0 0)
+   (poke! notes-to-trigger 1 0))
 
 
  ;;;; CONTROLLER LOGIC
@@ -527,7 +528,10 @@
 	     (step-draw-note)
 	     #f)
 	 (if (eq? 4 (and g-scroll-low #b00000111))
-	     (auto-play-notes)
+	     (do
+		 (auto-play-notes)
+		 (when g-netcode
+		       (step-netcode-buffer)))
 	     #f))
        (dec g-scroll-delay-ctr)))
 
