@@ -17,7 +17,7 @@
  (defaddr sprite-pos-x #x310) ;; current sprite position (x coord), 16 bytes
  (defaddr sprite-pos-y #x320)  ;; current sprite position (y coord), 16 bytes
  (defaddr sprite-anim-frame #x330)  ;; sprite animation frame counter, 16 bytes
- (defaddr notes-to-trigger #x340)  ;; notes to trigger on this beat and previous beat, 4 bytes (2 bytes of 8 notes * 2 beats)
+ (defaddr notes-to-trigger #x340)  ;; notes to trigger on this beat and previous beat, 6 bytes (2 bytes of 8 notes * 3 beats)
 
  (defconst ppu-name-table-0 #x2000)
  (defconst ppu-name-table-1 #x2400)
@@ -446,7 +446,7 @@
  (defsub (note-is-triggered which-note)
    (let ([bank] [bitfield])
      (set-multiple! bank bitfield (index-to-offset-field which-note 1))
-     (loop n 0 2
+     (loop n 0 3
 	   (when (and (peek notes-to-trigger (+ (<< n 1) bank)) bitfield)
 		 (return #t))))
    (return #f))
@@ -458,6 +458,8 @@
 
  ;; increments the buffer holding netcode cached bells
  (defsub (step-netcode-buffer)
+   (poke! notes-to-trigger 4 (peek notes-to-trigger 2))
+   (poke! notes-to-trigger 5 (peek notes-to-trigger 3))
    (poke! notes-to-trigger 2 (peek notes-to-trigger 0))
    (poke! notes-to-trigger 3 (peek notes-to-trigger 1))
    (poke! notes-to-trigger 0 0)
