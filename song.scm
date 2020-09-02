@@ -1,5 +1,8 @@
 #lang racket
 
+;; handwave copyright 2020 Mark T. Tomczak
+;; Source code released under MIT license; see LICENSE file for details
+
 (require errortrace)
 (require racket/cmdline)
 (require racket/hash)

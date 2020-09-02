@@ -1,6 +1,7 @@
 ;; -*- mode: scheme; -*-
 
-;; TODO: netcode has busted up regular playback logic. Address.
+;; handwave copyright 2020 Mark T. Tomczak
+;; Source code released under MIT license; see LICENSE file for details
 
 (do
 
@@ -547,7 +548,7 @@
 	   (if (eq? g-scroll-low 0)
 	       (set! g-scroll-high (and (not g-scroll-high) #x1))
 	       #f)
-	 (set! g-scroll-delay-ctr 0)
+	 (set! g-scroll-delay-ctr 1)
 	 (if (eq? 7 (and g-scroll-low #b00000111))
 	     (step-draw-note)
 	     #f)

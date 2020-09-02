@@ -1,108 +1,106 @@
+;; Song file copyright 2020 Mark T. Tomczak
+;; Source code released under MIT license; see LICENSE file for details
+
 (song
- (e4 e3 g#4 g#3 a4 a3 b4 b3 c5 c4 d5 d4 e5 f5 g5 a5)
+ (e3 g#3 a3 b3 c4 d4 e4 g#4 a4 b4 c5 d5 e5 f5 g5 a5)
  e4
- rest 5
+ e3
+ g#3
  g#4
- rest 1
- a4
- rest 3
- g4
- rest 1
+ (chord a4 a3)
+ e3
  e4
- rest 1
- a4
- rest 5
+ (chord e3 e4)
+ (chord a3 a4)
+ e3
+ a3
  c5
- rest 1
  e5
- rest 3
+ e3
  d5
- rest 1
- c5
- rest 1
- b4
- rest 5
- c5
- rest 1
- d5
- rest 3
+ (chord c4 c5)
+ (chord b3 b4)
+ c4
+ b3
+ (chord c4 c5)
+ (chord d4 d5)
+ e3
  e5
- rest 3
+ e3
  c5
- rest 3
+ a3
  a4
- rest 3
+ a3
  a4
- rest 7
+
+ c4
+ d4
+ e4
+
+ (chord d4 f5)
+ c4
+ d4
+ g5
+ a5
+ a4
+ g5
+ f5
+ e5
+ e4
+ e4
 
  f5
- rest 5
- g5
- rest 1
- a5
- rest 3
- g5
- rest 1
- f5
- rest 1
  e5
- rest 5
- f5
- rest 1
- e5
- rest 3
+ e4
  d5
- rest 1
  c5
- rest 1
  b4
- rest 5
+ a3
+ b3
  c5
- rest 1
- d5
- rest 3
- e5
- rest 3
+ (chord d4 d5)
+ c4
+ (chord e4 e5)
+ d4
  c5
- rest 3
+ c4
  a4
- rest 3
+ a3
  a4
- rest 7
 
- f5
- rest 5
+ e4
+ d4
+ c4
+
+ (chord d4 f5)
+ c4
+ d4
  g5
- rest 1
  a5
- rest 3
+ a4
  g5
- rest 1
  f5
- rest 1
  e5
- rest 5
+ d4
+ e4
  f5
- rest 1
  e5
- rest 3
+ c4
  d5
- rest 1
  c5
- rest 1
  b4
- rest 5
+ b3
+ c4
  c5
- rest 1
  d5
- rest 3
+ c4
  e5
+ b3
+ (chord c4 c5)
+ rest 1
+ (chord a3 a4)
+ rest 1
+ (chord a3 a4)
  rest 3
- c5
- rest 3
- a4
- rest 3
- a4
- rest 7
  )
 
