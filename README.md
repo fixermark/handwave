@@ -60,9 +60,9 @@ Makefile.
 
 The song is an arrangement of "Korobeiniki," a traditional Russian song that may
 be slightly familiar to some old game fans. ;) The music is stored in the
-`[first.sng](/first.sng)` file, which is compiled through a small Racket program
-in `[song.scm](/song.scm)`. The song language is Racket-derived and described in
-`[song-language.md](/song-language.md)`.
+[first.sng](/first.sng) file, which is compiled through a small Racket program
+in [song.scm](/song.scm). The song language is Racket-derived and described in
+[song-language.md](/song-language.md).
 
 You are very much encouraged to try writing your own songs! Changing the
 contents of `first.sng` and running `make` should kick out a new ROM with your
